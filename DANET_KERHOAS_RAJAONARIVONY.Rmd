@@ -1,0 +1,961 @@
+---
+output: html_document
+authors: "Chloé Danet - Gwladys Kerhoas - Candice Rajaonarivony"
+---
+
+# Apprentissage supervisé et non supervisé
+
+## Partie 1 : Détection de nouveauté par One-class SVM et Kernel PCA
+
+### 2 - Lecture et description des données
+
+#### Question 2
+```{r}
+# Chargement des données dans Rstudio avec la commande "read.table"
+D <- read.table("breast-cancer-wisconsin.data", sep=",", na.strings = "?")
+```
+
+#### Question 3
+```{r}
+class(D) # Type des données
+str(D) # Nombre d'observations et de variables et leur type associé
+head(D) # Premières lignes du jeu de données
+summary(D) # Résumé des données
+```
+
+
+### 3 - Séparation des données en "train" et "test"
+
+#### Question 4
+```{r}
+# Recherche des données manquantes de D avec la commande "complete.cases"
+ok <- complete.cases(D)
+
+# Affichage des observations ayant au moins une donnée manquante
+D[!ok,]
+
+# Affichage du nombre d'observations ayant au moins une donnée manquante
+sum(!ok)
+```
+
+#### Question 5
+```{r}
+# Suppression des observations ayant au moins une données manquantes
+D <- D[ok,]
+```
+On décide de supprimer les observations ayant au moins une données manquantes afin que le jeu de données D ne possède que des données complètes.
+
+
+#### Question 6
+```{r}
+# Stockage des variables explicatives dans la variable X
+X <- D[,2:10]
+head(X)
+
+# Stockage de la variable cible dans y
+y <- D[,11]
+head(y)
+```
+
+#### Question 7
+```{r}
+# Recodage de la variable cible en 0 ou 1
+y[y == 2] <- 0
+y[y == 4] <- 1
+
+# Affichage du traitement de la variable cible
+#y
+```
+
+#### Question 8
+```{r}
+# Stockage des observations correspondant à des tumeurs bégnines dans la variable "benin"
+benin <- which(y == 0)
+#benin
+
+# Stockage des observations correspondant à des tumeurs malignes dans la variable "malin"
+malin <- which(y == 1)
+#malin
+```
+
+#### Question 9
+```{r}
+# Ensemble d'entraînement : 200 premières observations bégnines
+train_set <- benin[1:200]
+#train_set
+
+# Définition des observations à entrainer selon X et y
+Xtrain <- X[train_set,]
+ytrain <- y[train_set]
+
+# Nombre d'observations bégnines
+n <- length(benin)
+n
+
+# Ensemble de test : observations bégnines non entrainées (de 201 jusqu'à n) et observations malignes
+test_set <- sort(c(benin[201:n],malin)) # sort : ordonner les indices des observations
+#test_set
+
+# Définition des observations à tester selon X et y
+Xtest <- X[test_set,]
+ytest <- y[test_set]
+```
+
+
+### 4 - One-class SVM
+
+#### Question 10
+```{r}
+# Chargement de la librairie "e1071"
+#install.packages("e1071")
+library(e1071)
+```
+
+#### Question 11
+```{r}
+# Estimation du modèle à partir de l'ensemble d'entrainement
+oc_svm_fit <- svm(y=ytrain, x=Xtrain, kernel="radial", type= "one-classification", gamma=1/2)
+oc_svm_fit
+help(svm)
+```
+
+#### Question 12
+```{r}
+# Prédiction des scores des observations de test
+oc_svm_pred_test <- predict(oc_svm_fit, newdata=Xtest, decision.values = TRUE)
+#oc_svm_pred_test
+```
+
+#### Question 13
+```{r}
+# Déterminer un argument spécifique de l'objet oc_svm_pred_test
+#attr(oc_svm_pred_test,"decision.values") # Decision.values : décision d'appartenance à la modalité cible
+
+# Transformation en vecteur numérique et inversement du signe des scores pour plus de lisibilité par la suite
+oc_svm_score_test=-as.numeric(attr(oc_svm_pred_test ,"decision.values"))
+#oc_svm_score_test
+```
+
+
+### 5 - Courbe ROC
+
+#### Question 14
+```{r}
+# Chargement de la librairie ROCR
+#install.packages("ROCR")
+library(ROCR)
+```
+
+#### Question 15
+```{r}
+# Instance de prédiction pour les 483 points d'observation
+pred_oc_svm = prediction(oc_svm_score_test, ytest)
+
+# Etude des mesures de performances tpr et fpr avec la courbe ROC
+oc_svm_roc = performance(pred_oc_svm, measure = "tpr", x.measure= "fpr")
+plot(oc_svm_roc)
+```
+
+### Question 16
+Le modèle semble être très performant selon les résulats de la courbe ROC et l'AUC obtenue ci-dessous.
+
+```{r}
+# Calcul de l'AUC
+perform_svm <- performance(pred_oc_svm , measure = "auc")
+print(perform_svm@y.values)
+```
+
+
+### 6 - Kernel PCA
+
+#### Question 17
+```{r}
+# Library "kernlab"
+library(kernlab)
+
+# Création d'une fonction noyau avec l'hyperparamètre sigma 1/8
+kernel=rbfdot(sigma=1/8) 
+kernel
+
+# Transformation des observations d'apprentissage en matrice pour les variables explicatives 
+mat_trainset <- as.matrix(Xtrain)
+
+# Création d'une matrice symétrique diagonale semi-définie : matrice à noyau K_{ij} = k(x_i,x_j)
+Ktrain=kernelMatrix(kernel, x=mat_trainset) # mat_trainset : données d'entrainements
+#Ktrain
+
+# Nombre de ligne dans la matrice noyau
+n <- nrow(Ktrain) 
+n
+```
+
+#### Question 18
+```{r}
+# Calculs des sommes des matrices à noyaux K pour le calcul de l'équation (1)
+k2=apply(Ktrain,1,sum) # correspond à sum(K(xi,xs))
+k3=apply(Ktrain,2,sum) # correspond à sum(K(xr,xj))
+k4=sum(Ktrain) # correspond à sum(K(xr,xs))
+
+# Création d'une matrice initialisée à 0 pour n lignes et n colonnes
+KtrainCent=matrix(0,ncol=n,nrow=n) 
+
+# Calcul de l'équation (1) en utilisant les variables déclarées ci-dessus
+for (i in 1:n) {
+  for (j in 1:n) {
+    KtrainCent[i,j]=Ktrain[i,j]-1/n*k2[i]-1/n*k3[j]+1/n^2*k4 
+  }
+}
+```
+
+#### Question 19
+```{r}
+# Décomposition spectrale de KtrainCent
+eigen_KtrainCent <- eigen(KtrainCent)
+```
+
+#### Question 20
+```{r}
+# Espace réduit de dimension s=80 axes principaux
+s <- 80
+
+# Calculs des coefficients alpha
+A=eigen_KtrainCent$vectors[,1:s]%*%diag(1/sqrt(eigen_KtrainCent$values[1:s]))
+```
+
+#### Question 21
+```{r}
+# Calcul de la matrice Kij = k(xi,xj) avec xi colonnes de X
+matX <- as.matrix(X)
+K=kernelMatrix(kernel,matX) # matX : toutes les données des variables explicatives
+```
+
+#### Question 22
+```{r}
+# Instanciation des termes de l'équation (4)
+p1 <- (K) # correspond à la matrice K
+p2 <- apply(K[,train_set],1,sum) # correspond à sum(K(z,xi))
+p3 <- sum(K[train_set,train_set]) # correspond à sum(K(xi,xj))
+```
+
+#### Question 23
+```{r}
+# Vecteur donnant la quantité de l'équation (4) pour les observations de test
+ps <- NULL
+
+i<-1
+# Calcul de l'équation (4) en utilisant les variables déclarées ci-dessus p1, p2 et p3
+for (z in test_set) {
+  ps[i]= p1[z,z] -(2/n) * p2[z] + (1/n^2)* p3
+  i<-i+1
+}
+```
+
+#### Question 24
+```{r}
+# Instanciation des termes de l'équation (5)
+f1 <- K[test_set,train_set] # correspond à sum(K(z,xi))
+f2 <- p2[train_set] # correspond à sum(K(xi,xr))
+f3 <- p2[test_set] # correspond à sum(K(z,xr))
+f4 <- p3 # correspond à sum(K(xr,xs))
+```
+
+#### Question 25
+```{r}
+# Vecteur donnant la quantité de l'équation (5) initialisé à s colonnes et n2 lignes
+n2 <- length(test_set) 
+fl <- matrix(0,ncol=s,nrow=n2)
+
+# Calcul de l'équation (5) en utilisant les variables déclarées ci-dessus f1, f2, f3 et f4
+
+# Boucle sur le nombre d'axes principaux retenus
+for (m in 1:s){
+  i<-0
+  # Boucle sur les données de test
+  for (z in test_set){
+    i<-i+1
+    # Création d'une variable temporelle initialisé à 0
+    temp<-0
+    for (i2 in 1:n){
+      temp <- temp +(A[i2,m]*( f1[i,i2] - (1/n)*f2[i2] - (1/n)*f3[i] + (1/n^2)*f4))
+    }
+    # Actualisation de la matrice fl
+    fl[i,m]<-temp
+  }
+}
+```
+
+#### Question 26
+```{r}
+# Vecteur donnant le score défini dans l'équation (3)
+kpca_score_test <- ps - apply(fl^2,1,sum)
+#kpca_score_test
+```
+
+#### Question 27
+```{r}
+# Instance de prédiction pour les 483 points d'observation
+pred_oc_acp = prediction(kpca_score_test, ytest)
+
+# Etude des mesures de performances tpr et fpr avec la courbe ROC pour le Kernel PCA
+oc_acp_roc = performance(pred_oc_acp, measure = "tpr", x.measure = "fpr")
+
+# Affichage de la courbe ROC Kernel PCA
+plot(oc_acp_roc)
+
+# Affichage des deux courbes ROC simultanément
+plot(oc_svm_roc)
+plot(oc_acp_roc, add=TRUE, col="red")
+
+# Calcul des AUC 
+print("AUC SVM")
+print(perform_svm@y.values)
+
+print("AUC ACP")
+perform_acp <- performance(pred_oc_acp, measure = "auc")
+print(perform_acp@y.values)
+```
+On remarque que les résultats obtenus avec la 2ème méthode : Kernel PCA sont très légèrement de meilleure qualité que les résultats obtenus avec le One-class SVM en première partie. Ceci est visible notamment avec les courbes ROC (la courbe ROC de l'ACP se rapproche davantage du point (0,1) que celle du SVM) et le calcul des deux AUC : AUC(ACP) = 0.9962 > AUC(SVM) = 0.9932. Et, on sait que plus l'AUC se rapproche de 1, plus le modèle est de bonne qualité.
+Cependant, ces deux méthodes restent toutes les deux très performantes.
+
+
+
+
+
+
+
+
+## Partie 2 : Etude de cas présentant un problème de prédiction
+
+### Lecture des données
+
+```{r}
+# Chargement des données
+bank <- read.csv("bank.csv", header=TRUE, sep=";")
+```
+
+```{r}
+# Informations sur les données 
+class(bank) # Type de données
+str(bank) # Type des variables
+summary(bank) # Résumé des données
+head(bank) # Premières lignes du jeu de données
+names(bank) # Variables du jeu de données
+```
+Notre jeu de données est composé de 4521 observations et 17 variables.
+
+### Pré-traitements des données
+
+```{r}
+# Recherche de données manquantes
+sum(is.na(bank))
+```
+Il n'y a pas de données manquantes dans notre notre jeu de données.
+
+```{r}
+# Séparation X et y
+X=bank[,1:16]
+y=bank[,17]
+```
+
+```{r}
+# Recodage des variables catégorielles binaires
+X$default[X$default == "yes"] <- 1
+X$default[X$default == "no"] <- 0
+
+X$housing[X$housing == "yes"] <- 1
+X$housing[X$housing == "no"] <- 0
+
+X$loan[X$loan == "yes"] <- 1
+X$loan[X$loan == "no"] <- 0
+
+#recodage de la variable cible 
+y[y == "yes"] <- 1
+y[y == "no"] <- 0
+
+#recodage des variables catégorielles avec plus de 2 modalités
+#install.packages('fastDummies')
+library(fastDummies)
+var_categ = c('job','marital','education','contact','poutcome')
+X <- dummy_columns(X, select_columns = var_categ, remove_selected_columns = TRUE)
+
+#recodage de la variable mois
+X$month[X$month == "jan"] <- 1
+X$month[X$month == "feb"] <- 2
+X$month[X$month == "mar"] <- 3
+X$month[X$month == "apr"] <- 4
+X$month[X$month == "may"] <- 5
+X$month[X$month == "jun"] <- 6
+X$month[X$month == "jul"] <- 7
+X$month[X$month == "aug"] <- 8
+X$month[X$month == "sep"] <- 9
+X$month[X$month == "oct"] <- 10
+X$month[X$month == "nov"] <- 11
+X$month[X$month == "dec"] <- 12
+
+X$default <- as.numeric(X$default)
+X$housing <- as.numeric(X$housing)
+X$loan <- as.numeric(X$loan)
+X$month <- as.numeric(X$month)
+y <- as.numeric(y)
+
+#vérification
+head(X)
+```
+
+### Approche globale
+
+```{r}
+# Contenu de notre variable cible
+summary(factor(y))
+```
+Sur les 4521 individus de notre jeu de données, seuls 521 souscrivent à un dépôt bancaire.
+
+```{r}
+# Représentation graphique des données
+plot(factor(y))
+```
+
+```{r}
+# Sélection de variables
+library(leaps)
+Bank_entier=cbind(X,y)
+res1 <- regsubsets(y~.,data=Bank_entier,nbest = 1,nvmax = NULL,force.in = NULL,force.out = NULL,method = "forward") 
+
+# Graphique selon les R^2 ajustés
+plot(res1,scale="adjr2")
+
+# Summary de res1
+summary <- summary(res1)
+
+# Affichage des modèles
+summary$which
+
+# Affichage des R^2-ajustés
+adjr <- summary$adjr2
+
+# Recherche du R^2-ajusté le plus élevé
+adjR_max <- max(summary$adjr2)
+
+# Recherche du meilleur modèle
+modele <- which(adjr == adjR_max)
+best_model = summary$which[modele,]
+best_model
+
+# Sélection des meilleurs variables
+var <- which(best_model==TRUE)
+X <- Bank_entier[,var-1]
+```
+
+```{r}
+# Partionnement train et test : 75% train et 25% test
+Bank=cbind(X,y)
+sample_size <- floor(0.75 * nrow(Bank))
+
+# Séparation train/test avec une seed
+set.seed(1234)
+train_ind <- sample(seq_len(nrow(Bank)), size=sample_size)
+
+train <- Bank[train_ind, ]
+test <- Bank[-train_ind, ]
+
+# Création des X et y train/test
+y_train <- train[,20]
+y_test <- test[,20]
+X_train <- train[,-20]
+X_test <- test[,-20]
+```
+
+```{r}
+# Partionnement train et test : 75% train et 25% test
+# Sur toutes les données
+
+sample_size_ent <- floor(0.75 * nrow(Bank_entier))
+
+# Séparation train/test avec une seed
+train_ind_ent <- sample(seq_len(nrow(Bank_entier)), size=sample_size)
+
+train_ent <- Bank_entier[train_ind, ]
+test_ent <- Bank_entier[-train_ind, ]
+
+# Création des X et y train/test
+y_train_ent <- train_ent[,38]
+y_test_ent <- test_ent[,38]
+X_train_ent <- train_ent[,-38]
+X_test_ent <- test_ent[,-38]
+```
+
+
+### Modèle linéaire pénalisé par une fonction de régularisation elasticnet
+
+```{r}
+library(Rcpp)
+#install.packages("glmnet")
+library(glmnet)
+
+# Elastic-Net
+# Fitting
+reg_mult_en=glmnet(x=X_train, y=y_train, family="gaussian", alpha=0.5)
+plot(reg_mult_en)
+# Summary
+sum_reg_mult_en=summary(reg_mult_en)
+sum_reg_mult_en
+# Cross Validation
+### X doit être une matrice avec des colonnes toutes de type numeric, on modifie celles qui ne le sont pas
+X_train$default <- as.numeric(X_train$default)
+X_train$housing <- as.numeric(X_train$housing)
+X_train$loan <- as.numeric(X_train$loan)
+###
+cv_en_fit=cv.glmnet(x=as.matrix(X_train), y=as.numeric(y_train), family="gaussian", nfolds=5, alpha=0.5)
+cv_en_fit
+# Graphique de la CV selon la valeur de lambda
+plot(cv_en_fit)
+# Meilleure valeur de lambda
+cv_en_fit$lambda.min
+# Coefficient
+coef(cv_en_fit, s="lambda.min")
+
+
+## Cross validation cv.glmnet pour trouver la valeur optimale du paramètre lambda
+
+### Sans sélection de variables
+
+cv.reg <- cv.glmnet(x=as.matrix(X_train_ent),y=as.matrix(y_train_ent),family="binomial",alpha=0.5)
+
+plot(cv.reg)
+# La valeur optimale du lambda se trouve aux alentours de 0.6, il s'agit de la valeur qui minimise l'erreur
+
+# Meilleure valeur de lambda
+cv.reg$lambda.min
+# 0.006914245
+
+# Création d'un modèle avec le lambda_min et d'un autre avec le lambda_1se
+reg <- glmnet(x=as.matrix(X_train_ent),y=as.matrix(y_train_ent),family="binomial",alpha=0.5,lambda = cv.reg$lambda.min)
+reg2 <- glmnet(x=as.matrix(X_train_ent),y=as.matrix(y_train_ent),family="binomial",alpha=0.5,lambda = cv.reg$lambda.1se)
+
+# Predictions sur l'échantillon 
+
+pred<- predict(reg,as.matrix(X_test_ent),type="class")
+pred2 <-predict(reg2,as.matrix(X_test_ent),type="class")
+
+# Résultats
+
+library(caret)
+conf<-confusionMatrix(factor(pred),factor(y_test_ent))
+conf
+# lambda.min ->  Accuracy : 0.9019
+conf2<-confusionMatrix(factor(pred2),factor(y_test_ent))
+conf2
+# lambda.lse -> Accuracy : 0.8966
+
+# Le meilleur modèle est donc celui avec lambda.min
+
+
+### Avec sélection de variables
+
+cv.reg2 <- cv.glmnet(x=as.matrix(X_train),y=as.matrix(y_train),family="binomial",alpha=0.5)
+
+plot(cv.reg2)
+
+#meilleure valeur de lambda
+cv.reg2$lambda.min
+# 0.002264104
+
+# Création d'un modèle avec le lambda_min et d'un autre avec le lambda_1se
+reg3 <- glmnet(x=as.matrix(X_train),y=as.matrix(y_train),family="binomial",alpha=0.5,lambda = cv.reg2$lambda.min)
+reg4 <- glmnet(x=as.matrix(X_train),y=as.matrix(y_train),family="binomial",alpha=0.5,lambda = cv.reg2$lambda.1se)
+
+# Predictions sur l'échantillon 
+
+pred3<- predict(reg3,as.matrix(X_test),type="class")
+pred4 <-predict(reg4,as.matrix(X_test),type="class")
+
+# Resultats
+library(caret)
+conf3<-confusionMatrix(factor(pred3),factor(y_test))
+conf3
+# lambda.min -> Accuracy : 0.9019
+conf4<-confusionMatrix(factor(pred4),factor(y_test))
+conf4
+# lambda.lse -> Accuracy : 0.8868
+
+# Le meilleur modèle est donc celui avec lambda.min
+
+# Et le meilleur modèle est aussi celui sans la sélection de variables
+
+
+### Recherche du meilleur paramètre alpha
+
+# Méthode 1  
+
+alphalist <- seq(0.1,0.9,by=0.1)
+elasticnet <- lapply(alphalist, function(a){
+  cv.glmnet(x=as.matrix(X_train_ent),y=as.matrix(y_train_ent),alpha=a,family="binomial",lambda.min.ratio=.001)
+})
+for (i in 1:9) {print(min(elasticnet[[i]]$cvm))}
+
+# Méthode 2
+
+foldid <- sample(1:10, size = length(y_train_ent), replace = TRUE)
+cv.glmnet(as.matrix(X_train_ent), as.matrix(y_train_ent), foldid = foldid, alpha = 0.25)
+cv.glmnet(as.matrix(X_train_ent), as.matrix(y_train_ent), foldid = foldid, alpha = 0.5)
+cv.glmnet(as.matrix(X_train_ent), as.matrix(y_train_ent), foldid = foldid, alpha = 0.75)
+
+# Méthode 3
+
+cv_5 = trainControl(method = "cv", number = 5)
+def_elnet = train(
+  factor(y) ~ ., data = train_ent,
+  method = "glmnet",
+  trControl = cv_5
+)
+def_elnet
+```
+
+### Réseau de neuronnes avec une couche cachée
+
+```{r}
+#NEURAL NET WITH 1 HIDDEN LAYER
+#install.packages("neuralnet")
+
+library(neuralnet)
+library(questionr)
+
+p=19
+n=nrow(Bank)
+nom_var_exp=names(Bank)
+nom_var_exp=nom_var_exp[1:p]
+nom_var_exp
+
+#formula
+modele <- as.formula(paste("y ~ ", paste(nom_var_exp, collapse= "+")))
+modele
+
+#Fitting
+nnet_fit_1hl = neuralnet(formula=modele, data=train, hidden=5, err.fct="ce", linear.output = FALSE)
+nnet_fit_1hl$net.result
+nnet_fit_1hl$act.fct
+
+help(neuralnet)
+
+#Plot
+plot(nnet_fit_1hl)
+
+#Predict
+pred_sc=compute(nnet_fit_1hl,Bank[1:10,1:p])
+```
+
+```{r}
+#CROSS VALIDATION===============
+n=nrow(Bank)
+p=19
+nb_folds=5
+ncol=ncol(Bank)
+folds_obs=sample(rep(1:nb_folds,length.out=n))
+for (k in 1:nb_folds)
+{
+  print(paste("===== Fold :",k))
+  cv_test=which(folds_obs==k)
+  cv_train=setdiff(1:n,cv_test)
+  cv_nnet_fit_1hl=neuralnet(formula = modele,data = Bank[cv_train,], hidden = 5, err.fct = "ce", linear.output = FALSE)
+  cv_pred_sc=compute(nnet_fit_1hl,Bank[cv_test,1:p])
+  pred_clas=apply(cv_pred_sc$net.result,2,round)
+  #pred_clas=apply(cv_pred_sc$net.result,1,which.max)
+  true_clas=Bank[cv_test,ncol]
+  print(table(true_clas,pred_clas))
+}
+```
+
+```{r}
+library(caret)
+
+# Différents hyper-paramètres à tester
+# Test de plusieurs fonctions d'activation et divers nombre de neuronnes sur la couche cachée
+parameters <- list(
+  activation=c("Rectifier","Tanh","Maxout","RectifierWithDropout","TanhWithDropout","MaxoutWithDropout"),
+  hidden=list(2,3,4,5,6,7,8,9,10,15,20,25,30)
+)
+
+#https://docs.h2o.ai/h2o-tutorials/latest-stable/tutorials/deeplearning/index.html
+## Stop once the top 5 models are within 1% of each other (i.e., the windowed average varies less than 1%)
+#install.packages('h2o')
+
+library(h2o)
+
+h2o.init(nthreads = 1)
+
+# Transformation format reconnu par h2o
+h2oTrain <- as.h2o(train)
+h2oTest <- as.h2o(test)
+
+h2oTrain$y <- as.factor(h2oTrain$y)
+
+search_criteria = list(strategy = "RandomDiscrete", max_runtime_secs = 360, max_models = 200, seed=1234, stopping_rounds=5, stopping_tolerance=1e-2)
+dl_random_grid <- h2o.grid(
+  algorithm="deeplearning",
+  grid_id = "dl_grid_random",
+  training_frame=h2oTrain,
+  y="y",
+  epochs=1,
+  stopping_metric="logloss",
+  stopping_tolerance=1e-2,        ## stop when logloss does not improve by >=1% for 2 scoring events
+  stopping_rounds=2,
+  score_validation_samples=10000, ## downsample validation set for faster scoring
+  score_duty_cycle=0.025,         ## don't score more than 2.5% of the wall time
+  max_w2=10,                      ## can help improve stability for Rectifier
+  hyper_params = parameters,
+  search_criteria = search_criteria,
+  # Validation croisée
+  nfolds=5,
+  keep_cross_validation_predictions=T
+)     
+
+# Differents modeles testes
+grid <- h2o.getGrid("dl_grid_random",sort_by="logloss",decreasing=FALSE)
+print(grid)
+
+# On recupere le meilleur modele
+best_nn <- h2o.getModel(grid@model_ids[[1]]) ## model with lowest logloss
+print(best_nn)
+
+# Predictions avec le meilleur modele
+test$y <- as.factor(test$y)
+pred_bestnn <- h2o.predict(best_nn,newdata=h2oTest)
+pred_bestnn_mat<-as.matrix(pred_bestnn)[,"predict"]
+pred_bestnn_mat<-as.factor(pred_bestnn_mat)
+
+cm_bestnn<-confusionMatrix(pred_bestnn_mat,test$y)
+print(cm_bestnn)
+
+#h2o.shutdown()
+```
+
+### SVM
+
+```{r}
+# SVM 
+library(e1071)
+svm_fit=svm(y~.,data=train,kernel="linear")
+svm_fit$residuals
+
+# Prédiction sur l'appartenance de la classe
+Bank$y-predict(svm_fit,Bank) 
+help(svm)
+
+# MSE
+sum(svm_fit$residuals^2)/length(svm_fit$residuals)
+
+# Support Vectors et leurs coefficients
+svm_fit$SV
+
+# Epsilon : e, par défaut = 0.1
+svm_fit$epsilon
+
+# Critère C : par défaut = 1
+svm_fit$cost
+
+# C = 2
+svm_fit_2=svm(y~.,data=train,kernel="linear", cost=2)
+sum(svm_fit_2$residuals^2)/length(svm_fit_2$residuals)
+
+# C = 10
+svm_fit_10=svm(y~.,data=train,kernel="linear", cost=10)
+sum(svm_fit_10$residuals^2)/length(svm_fit_10$residuals)
+```
+
+
+```{r}
+# Application de la Validation croisée (hyper-paramètre cross)
+svm_fit=svm(y~.,data=train,kernel="linear",cross=5)
+svm_fit$MSE 
+
+# C = 1
+mean(svm_fit$MSE)
+
+# C = 2
+svm_fit_2=svm(y~.,data=train,kernel="linear",cross=5, cost = 2)
+svm_fit_2$MSE 
+mean(svm_fit_2$MSE)
+
+# C = 10
+svm_fit_10=svm(y~.,data=train,kernel="linear",cross=5, cost = 10)
+svm_fit_10$MSE 
+mean(svm_fit_10$MSE)
+```
+
+```{r}
+# Chargement de la librairie ROCR
+#install.packages("ROCR")
+library(ROCR)
+help(svm)
+
+# Prédiction des scores des observations de test
+svm_pred_test_1 <- predict(svm_fit, newdata=test)
+svm_pred_test_2 <- predict(svm_fit_2, newdata=test)
+svm_pred_test_10 <- predict(svm_fit_10, newdata=test)
+
+# Instance de prédiction pour les points d'observation
+pred_svm_1=prediction(svm_pred_test_1, y_test)
+pred_svm_2=prediction(svm_pred_test_2, y_test)
+pred_svm_10=prediction(svm_pred_test_10, y_test)
+
+# Etude des mesures de performances tpr et fpr avec la courbe ROC
+svm_roc_1 = performance(pred_svm_1, measure = "tpr", x.measure= "fpr")
+svm_roc_2 = performance(pred_svm_2, measure = "tpr", x.measure= "fpr")
+svm_roc_10 = performance(pred_svm_10, measure = "tpr", x.measure= "fpr")
+plot(svm_roc_1)
+plot(svm_roc_2, add=TRUE, col="red")
+plot(svm_roc_10, add=TRUE, col="blue")
+svm_pred_test_10
+
+# Matrice de confusion : Modèle "svm_pred_test_10"
+pred <- as.data.frame(svm_pred_test_10)
+pred_clas=apply(pred,2,round)
+table(pred_clas,y_test)
+```
+
+```{r}
+# Calcul de l'AUC
+perform_svm_1 <- performance(pred_svm_1 , measure = "auc")
+perform_svm_2 <- performance(pred_svm_2 , measure = "auc")
+perform_svm_10 <- performance(pred_svm_10 , measure = "auc")
+print(perform_svm_1@y.values)
+print(perform_svm_2@y.values)
+print(perform_svm_10@y.values)
+```
+
+```{r}
+# Utilisation de plusieurs noyaux
+
+# Noyau rbf 
+
+# Application de la Validation croisée (hyper-paramètre cross)
+# C = 1
+svm_fit=svm(y~.,data=train,kernel="radial",cross=5)
+svm_fit$MSE 
+mean(svm_fit$MSE)
+
+# C = 2
+svm_fit_2=svm(y~.,data=train,kernel="radial",cross=5, cost = 2)
+svm_fit_2$MSE 
+mean(svm_fit_2$MSE)
+
+# C = 10
+svm_fit_10=svm(y~.,data=train,kernel="radial",cross=5, cost = 10)
+svm_fit_10$MSE 
+mean(svm_fit_10$MSE)
+```
+
+```{r}
+# Chargement de la librairie ROCR
+#install.packages("ROCR")
+library(ROCR)
+
+# Prédiction des scores des observations de test
+svm_pred_test_1 <- predict(svm_fit, newdata=test)
+svm_pred_test_2 <- predict(svm_fit_2, newdata=test)
+svm_pred_test_10 <- predict(svm_fit_10, newdata=test)
+
+# Instance de prédiction pour les points d'observation
+pred_svm_1=prediction(svm_pred_test_1, y_test)
+pred_svm_2=prediction(svm_pred_test_2, y_test)
+pred_svm_10=prediction(svm_pred_test_10, y_test)
+
+# Etude des mesures de performances tpr et fpr avec la courbe ROC
+svm_roc_1 = performance(pred_svm_1, measure = "tpr", x.measure= "fpr")
+svm_roc_2 = performance(pred_svm_2, measure = "tpr", x.measure= "fpr")
+svm_roc_10 = performance(pred_svm_10, measure = "tpr", x.measure= "fpr")
+plot(svm_roc_1)
+plot(svm_roc_2, add=TRUE, col="red")
+plot(svm_roc_10, add=TRUE, col="blue")
+
+# Matrice de confusion : Modèle "svm_pred_test_10"
+pred <- as.data.frame(svm_pred_test_2)
+pred_clas=apply(pred,2,round)
+table(pred_clas,y_test)
+```
+
+```{r}
+# Calcul de l'AUC
+perform_svm_1 <- performance(pred_svm_1 , measure = "auc")
+perform_svm_2 <- performance(pred_svm_2 , measure = "auc")
+perform_svm_10 <- performance(pred_svm_10 , measure = "auc")
+print(perform_svm_1@y.values)
+print(perform_svm_2@y.values)
+print(perform_svm_10@y.values)
+```
+
+
+```{r}
+# Utilisation de plusieurs noyaux
+
+# Noyau polynomial
+
+# Application de la Validation croisée (hyper-paramètre cross)
+# C = 1
+svm_fit=svm(y~.,data=train,kernel="poly",cross=5)
+svm_fit$MSE 
+mean(svm_fit$MSE)
+
+# C = 2
+svm_fit_2=svm(y~.,data=train,kernel="poly",cross=5, cost = 2)
+svm_fit_2$MSE 
+mean(svm_fit_2$MSE)
+
+# C = 10
+svm_fit_10=svm(y~.,data=train,kernel="poly",cross=5, cost = 10)
+svm_fit_10$MSE 
+mean(svm_fit_10$MSE)
+```
+
+```{r}
+# Chargement de la librairie ROCR
+#install.packages("ROCR")
+library(ROCR)
+
+# Prédiction des scores des observations de test
+svm_pred_test_1 <- predict(svm_fit, newdata=test)
+svm_pred_test_2 <- predict(svm_fit_2, newdata=test)
+svm_pred_test_10 <- predict(svm_fit_10, newdata=test)
+
+# Instance de prédiction pour les points d'observation
+pred_svm_1=prediction(svm_pred_test_1, y_test)
+pred_svm_2=prediction(svm_pred_test_2, y_test)
+pred_svm_10=prediction(svm_pred_test_10, y_test)
+
+# Etude des mesures de performances tpr et fpr avec la courbe ROC
+svm_roc_1 = performance(pred_svm_1, measure = "tpr", x.measure= "fpr")
+svm_roc_2 = performance(pred_svm_2, measure = "tpr", x.measure= "fpr")
+svm_roc_10 = performance(pred_svm_10, measure = "tpr", x.measure= "fpr")
+plot(svm_roc_1)
+plot(svm_roc_2, add=TRUE, col="red")
+plot(svm_roc_10, add=TRUE, col="blue")
+```
+
+```{r}
+# Calcul de l'AUC
+perform_svm_1 <- performance(pred_svm_1 , measure = "auc")
+perform_svm_2 <- performance(pred_svm_2 , measure = "auc")
+perform_svm_10 <- performance(pred_svm_10 , measure = "auc")
+print(perform_svm_1@y.values)
+print(perform_svm_2@y.values)
+print(perform_svm_10@y.values)
+```
+
+```{r}
+# Optimisation des hyper-paramètres
+c_seq=c(1,10,50)
+eps_seq=c(0.05,0.1,0.5)
+d_seq=c(1,2,3,4)
+svm_grid_search=tune(method = svm, kernel = "linear", y~.,data=train, ranges =list(epsilon=eps_seq ,cost=c_seq, degree=d_seq)) 
+print(svm_grid_search)
+plot(svm_grid_search)
+```
+
+
+
+
+
+
+
+
+
